@@ -1,6 +1,6 @@
 ---
 name: xiaocai-强势股
-description: A股强势股分析工具。基于超超大大单净流入、概念热度、涨幅等因子，分析全市场最有可能继续上涨的股票。支持强烈推荐和激进型两种分类推荐。
+description: A股强势股分析工具。基于超超大大单净流入(1日+5日)、概念热度、涨幅等因子，分析全市场最有可能继续上涨的股票。支持强烈推荐和激进型两种分类推荐。
 ---
 
 # 小菜强势股分析
@@ -31,7 +31,8 @@ description: A股强势股分析工具。基于超超大大单净流入、概念
 
 | 因子 | 权重/条件 | 说明 |
 |:---|:---:|:---|
-| **超超大大单净流入** | 排序主要依据 | 5日累计净流入(亿元)，反映超级主力资金态度 |
+| **超超大大单净流入(5日)** | 排序主要依据 | 5日累计净流入(亿元)，反映中长期主力资金态度 |
+| **超超大大单净流入(1日)** | 加分项 | 当日净流入(亿元)，反映今日主力资金动向 |
 | **今日涨幅** | > 0 | 只选上涨的股票 |
 | **概念热度** | 加分项 | 热门概念(机器人、AI、军工等)加分 |
 
@@ -43,7 +44,7 @@ description: A股强势股分析工具。基于超超大大单净流入、概念
 
 ## SQL查询
 
-### 查询全市场强势股
+### 查询全市场强势股(含1日和5日)
 
 ```sql
 SELECT 
@@ -51,11 +52,14 @@ SELECT
     s.stock_name,
     s.close,
     s.pct_chg,
+    ROUND(n.super_super_net_1d_亿, 2) as super_super_1d_亿,
     ROUND(n.super_super_net_5d_亿, 2) as super_super_5d_亿,
-    cs.main_concepts
+    cs.main_concepts,
+    ROUND(n.super_super_net_1d_亿 * 0.4 + n.super_super_net_5d_亿 * 0.6, 2) as total_score
 FROM t_stock s
 LEFT JOIN (
     SELECT stock_code, 
+        SUM(CASE WHEN trade_date = CURDATE() THEN super_super_large_net_amount_1d ELSE 0 END)/100000000 as super_super_net_1d_亿,
         SUM(super_super_large_net_amount_5d)/100000000 as super_super_net_5d_亿
     FROM t_stock_net_inflow 
     WHERE trade_date >= DATE_SUB(CURDATE(), INTERVAL 5 DAY)
@@ -72,7 +76,43 @@ WHERE s.trade_date = CURDATE()
   AND s.close < 500
   AND s.pct_chg > 0
   AND n.super_super_net_5d_亿 > 0
-ORDER BY n.super_super_net_5d_亿 DESC
+ORDER BY total_score DESC
+LIMIT 25;
+```
+
+### 今日最新数据(手动日期)
+
+```sql
+SELECT 
+    s.stock_code,
+    s.stock_name,
+    s.close,
+    s.pct_chg,
+    ROUND(n.super_super_net_1d_亿, 2) as super_super_1d_亿,
+    ROUND(n.super_super_net_5d_亿, 2) as super_super_5d_亿,
+    cs.main_concepts,
+    ROUND(n.super_super_net_1d_亿 * 0.4 + n.super_super_net_5d_亿 * 0.6, 2) as total_score
+FROM t_stock s
+LEFT JOIN (
+    SELECT stock_code, 
+        SUM(CASE WHEN trade_date = '2026-02-13' THEN super_super_large_net_amount_1d ELSE 0 END)/100000000 as super_super_net_1d_亿,
+        SUM(super_super_large_net_amount_5d)/100000000 as super_super_net_5d_亿
+    FROM t_stock_net_inflow 
+    WHERE trade_date >= '2026-02-07'
+    GROUP BY stock_code
+) n ON s.stock_code = n.stock_code
+LEFT JOIN (
+    SELECT stock_code, GROUP_CONCAT(DISTINCT concept_name SEPARATOR ',') as main_concepts
+    FROM t_concept_stock GROUP BY stock_code
+) cs ON s.stock_code = cs.stock_code
+WHERE s.trade_date = '2026-02-13'
+  AND s.stock_name NOT LIKE 'ST%'
+  AND s.stock_name NOT LIKE '*ST%'
+  AND s.close > 3
+  AND s.close < 500
+  AND s.pct_chg > 0
+  AND n.super_super_net_5d_亿 > 0
+ORDER BY total_score DESC
 LIMIT 25;
 ```
 
@@ -80,7 +120,7 @@ LIMIT 25;
 
 ### 强烈推荐 (资金持续流入、趋势稳健)
 
-特征：超超大单净流入高、涨幅适中(0-5%)、趋势稳健
+特征：超超大单净流入高(5日)、涨幅适中(0-5%)、趋势稳健
 
 ### 激进型 (涨幅猛、股性活跃)
 
@@ -88,6 +128,7 @@ LIMIT 25;
 
 每只股票给出：
 - 代码、名称、收盘价、涨幅
+- 超超大单1日净流入(亿)
 - 超超大单5日净流入(亿)
 - 核心概念
 - 推荐逻辑(为什么看好)
@@ -96,19 +137,22 @@ LIMIT 25;
 
 ## 🔥 强烈推荐
 
-| 代码 | 名称 | 收盘 | 涨幅 | 超超大单5日(亿) | 逻辑 |
-|:---|:---:|---:|---:|---:|:---|
-| **002050** | 三花智控 | 53.48 | +1.54% | 76.38 | 超超大单净流入最高，新能源车+机器人双风口 |
+| 代码 | 名称 | 收盘 | 涨幅 | 超超1日(亿) | 超超5日(亿) | 逻辑 |
+|:---|:---:|---:|---:|---:|---:|:---|
+| **002050** | 三花智控 | 53.48 | +1.54% | 10.5 | 76.38 | 超超大单净流入最高，新能源车+机器人双风口 |
 
 ## 🚀 激进型
 
-| 代码 | 名称 | 收盘 | 涨幅 | 超超大单5日(亿) | 逻辑 |
-|:---|:---:|---:|---:|---:|:---|
-| **300251** | 光线传媒 | 27.22 | +15.39% | 67.00 | 今日暴涨15%，网红经济+虚拟数字人 |
+| 代码 | 名称 | 收盘 | 涨幅 | 超超1日(亿) | 超超5日(亿) | 逻辑 |
+|:---|:---:|---:|---:|---:|---:|:---|
+| **300251** | 光线传媒 | 27.22 | +15.39% | 20.3 | 67.00 | 今日暴涨15%，网红经济+虚拟数字人 |
 
 ## 注意事项
 
-1. 超超大大单净流入字段：`super_super_large_net_amount_5d` (5日累计)
-2. 今日日期用 `CURDATE()` 或手动指定(如 '2026-02-13')
-3. 排除ST股票
-4. 按照超超大单净流入降序排列
+1. 超超大大单净流入字段：
+   - `super_super_large_net_amount_1d` (1日当日)
+   - `super_super_large_net_amount_5d` (5日累计)
+2. 综合评分 = 1日净流入 * 0.4 + 5日净流入 * 0.6
+3. 今日日期用 `CURDATE()` 或手动指定(如 '2026-02-13')
+4. 排除ST股票
+5. 按照综合评分降序排列
