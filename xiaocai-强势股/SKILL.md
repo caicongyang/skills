@@ -16,10 +16,7 @@ description: A股强势股分析工具。基于超超大大单净流入(1日+5�
 
 ## 数据源
 
-使用MySQL数据库：
-- Host: 43.133.13.36
-- Port: 3333
-- Database: stock
+数据库配置见 `TOOLS.md` 中的 MySQL 配置。
 
 关键表：
 - `t_stock` - 股票日行情
