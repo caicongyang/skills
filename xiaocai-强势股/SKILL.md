@@ -31,8 +31,8 @@ description: A股强势股分析工具。基于超超大大单净流入(1日+5�
 
 | 因子 | 权重 | 说明 |
 |:---|:---:|:---|
-| **超超大大单净流入(1日)** | 45% | 当日净流入(亿元)，反映今日主力资金动向 |
-| **超超大大单净流入(5日)** | 55% | 5日累计净流入(亿元)，反映中长期主力资金态度 |
+| **超超大大单净流入(1日)** | 55% | 当日净流入(亿元)，反映今日主力资金动向 |
+| **超超大大单净流入(5日)** | 45% | 5日累计净流入(亿元)，反映中长期主力资金态度 |
 
 ## 筛选条件
 
@@ -53,8 +53,8 @@ SELECT
     ROUND(n.super_super_net_5d_亿, 2) as super_super_5d_亿,
     cs.main_concepts,
     ROUND(
-        n.super_super_net_1d_亿 * 0.45 + 
-        n.super_super_net_5d_亿 * 0.55
+        n.super_super_net_1d_亿 * 0.55 + 
+        n.super_super_net_5d_亿 * 0.45
     , 2) as total_score
 FROM t_stock s
 LEFT JOIN (
@@ -103,7 +103,7 @@ LIMIT 20;
 1. 超超大大单净流入字段：
    - `super_super_large_net_amount_1d` (1日当日)
    - `super_super_large_net_amount_5d` (5日累计)
-2. 综合评分权重：1日净流入45% + 5日净流入55%
+2. 综合评分权重：1日净流入55% + 5日净流入45%
 3. 今日日期用 @trade_date 变量或手动指定
 4. 筛选条件：今日涨幅 > 0 (只选上涨股票)
 5. 排除ST股票
