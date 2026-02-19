@@ -29,24 +29,28 @@ description: A股强势股分析工具。基于超超大大单净流入(1日+5�
 
 ## 分析因子
 
-| 因子 | 权重/条件 | 说明 |
+| 因子 | 权重 | 说明 |
 |:---|:---:|:---|
-| **超超大大单净流入(5日)** | 排序主要依据 | 5日累计净流入(亿元)，反映中长期主力资金态度 |
-| **超超大大单净流入(1日)** | 加分项 | 当日净流入(亿元)，反映今日主力资金动向 |
-| **今日涨幅** | > 0 | 只选上涨的股票 |
-| **概念热度** | 加分项 | 热门概念(机器人、AI、军工等)加分 |
+| **超超大大单净流入(5日)** | 45% | 5日累计净流入(亿元)，反映中长期主力资金态度 |
+| **超超大大单净流入(1日)** | 35% | 当日净流入(亿元)，反映今日主力资金动向 |
+| **概念热度** | 10% | 热门概念(机器人、AI、军工、新能源车等)加分 |
+| **今日涨幅** | 10% | 只选上涨的股票 |
 
 ## 筛选条件
 
 - 今日涨幅 > 0
 - 股价 3-500元(排除ST和极端价格)
 - 超超大大单5日净流入 > 0
+- 属于热门概念
+
+## 热门概念列表
+
+融资融券, 深股通, 创业板综, 沪股通, 央国企改革, 专精特新, 机构重仓, 半导体概念, 军工, 新能源车, 机器人概念, 人工智能, 华为概念, 低空经济, 人形机器人
 
 ## SQL查询
 
-### 查询全市场强势股(含1日和5日)
-
 ```sql
+-- 变量: @trade_date = '2026-02-13'
 SELECT 
     s.stock_code,
     s.stock_name,
@@ -55,65 +59,45 @@ SELECT
     ROUND(n.super_super_net_1d_亿, 2) as super_super_1d_亿,
     ROUND(n.super_super_net_5d_亿, 2) as super_super_5d_亿,
     cs.main_concepts,
-    ROUND(n.super_super_net_1d_亿 * 0.4 + n.super_super_net_5d_亿 * 0.6, 2) as total_score
+    ROUND(
+        n.super_super_net_1d_亿 * 0.35 + 
+        n.super_super_net_5d_亿 * 0.45 + 
+        s.pct_chg * 0.10 + 
+        IFNULL(h.concept_hot, 0) * 0.10
+    , 2) as total_score
 FROM t_stock s
 LEFT JOIN (
     SELECT stock_code, 
-        SUM(CASE WHEN trade_date = CURDATE() THEN super_super_large_net_amount_1d ELSE 0 END)/100000000 as super_super_net_1d_亿,
+        SUM(CASE WHEN trade_date = @trade_date THEN super_super_large_net_amount_1d ELSE 0 END)/100000000 as super_super_net_1d_亿,
         SUM(super_super_large_net_amount_5d)/100000000 as super_super_net_5d_亿
     FROM t_stock_net_inflow 
-    WHERE trade_date >= DATE_SUB(CURDATE(), INTERVAL 5 DAY)
+    WHERE trade_date >= DATE_SUB(@trade_date, INTERVAL 5 DAY)
     GROUP BY stock_code
 ) n ON s.stock_code = n.stock_code
 LEFT JOIN (
     SELECT stock_code, GROUP_CONCAT(DISTINCT concept_name SEPARATOR ',') as main_concepts
-    FROM t_concept_stock GROUP BY stock_code
+    FROM t_concept_stock 
+    WHERE concept_name IN ('融资融券', '深股通', '创业板综', '沪股通', '央国企改革', '专精特新', '机构重仓', '半导体概念', '军工', '新能源车', '机器人概念', '人工智能', '华为概念', '低空经济', '人形机器人')
+    GROUP BY stock_code
 ) cs ON s.stock_code = cs.stock_code
-WHERE s.trade_date = CURDATE()
+LEFT JOIN (
+    SELECT h.stock_code, COUNT(DISTINCT cs.concept_name) as concept_hot
+    FROM t_stock_higher h
+    JOIN t_concept_stock cs ON h.stock_code = cs.stock_code
+    WHERE h.trading_day >= DATE_SUB(@trade_date, INTERVAL 5 DAY) AND h.gain >= 9
+      AND cs.concept_name IN ('融资融券', '深股通', '创业板综', '沪股通', '央国企改革', '专精特新', '机构重仓', '半导体概念', '军工', '新能源车', '机器人概念', '人工智能', '华为概念', '低空经济', '人形机器人')
+    GROUP BY h.stock_code
+) h ON s.stock_code = h.stock_code
+WHERE s.trade_date = @trade_date
   AND s.stock_name NOT LIKE 'ST%'
   AND s.stock_name NOT LIKE '*ST%'
   AND s.close > 3
   AND s.close < 500
   AND s.pct_chg > 0
   AND n.super_super_net_5d_亿 > 0
+  AND cs.main_concepts IS NOT NULL
 ORDER BY total_score DESC
-LIMIT 25;
-```
-
-### 今日最新数据(手动日期)
-
-```sql
-SELECT 
-    s.stock_code,
-    s.stock_name,
-    s.close,
-    s.pct_chg,
-    ROUND(n.super_super_net_1d_亿, 2) as super_super_1d_亿,
-    ROUND(n.super_super_net_5d_亿, 2) as super_super_5d_亿,
-    cs.main_concepts,
-    ROUND(n.super_super_net_1d_亿 * 0.4 + n.super_super_net_5d_亿 * 0.6, 2) as total_score
-FROM t_stock s
-LEFT JOIN (
-    SELECT stock_code, 
-        SUM(CASE WHEN trade_date = '2026-02-13' THEN super_super_large_net_amount_1d ELSE 0 END)/100000000 as super_super_net_1d_亿,
-        SUM(super_super_large_net_amount_5d)/100000000 as super_super_net_5d_亿
-    FROM t_stock_net_inflow 
-    WHERE trade_date >= '2026-02-07'
-    GROUP BY stock_code
-) n ON s.stock_code = n.stock_code
-LEFT JOIN (
-    SELECT stock_code, GROUP_CONCAT(DISTINCT concept_name SEPARATOR ',') as main_concepts
-    FROM t_concept_stock GROUP BY stock_code
-) cs ON s.stock_code = cs.stock_code
-WHERE s.trade_date = '2026-02-13'
-  AND s.stock_name NOT LIKE 'ST%'
-  AND s.stock_name NOT LIKE '*ST%'
-  AND s.close > 3
-  AND s.close < 500
-  AND s.pct_chg > 0
-  AND n.super_super_net_5d_亿 > 0
-ORDER BY total_score DESC
-LIMIT 25;
+LIMIT 20;
 ```
 
 ## 输出格式
@@ -133,26 +117,13 @@ LIMIT 25;
 - 核心概念
 - 推荐逻辑(为什么看好)
 
-## 示例输出
-
-## 🔥 强烈推荐
-
-| 代码 | 名称 | 收盘 | 涨幅 | 超超1日(亿) | 超超5日(亿) | 逻辑 |
-|:---|:---:|---:|---:|---:|---:|:---|
-| **002050** | 三花智控 | 53.48 | +1.54% | 10.5 | 76.38 | 超超大单净流入最高，新能源车+机器人双风口 |
-
-## 🚀 激进型
-
-| 代码 | 名称 | 收盘 | 涨幅 | 超超1日(亿) | 超超5日(亿) | 逻辑 |
-|:---|:---:|---:|---:|---:|---:|:---|
-| **300251** | 光线传媒 | 27.22 | +15.39% | 20.3 | 67.00 | 今日暴涨15%，网红经济+虚拟数字人 |
-
 ## 注意事项
 
 1. 超超大大单净流入字段：
    - `super_super_large_net_amount_1d` (1日当日)
    - `super_super_large_net_amount_5d` (5日累计)
-2. 综合评分 = 1日净流入 * 0.4 + 5日净流入 * 0.6
-3. 今日日期用 `CURDATE()` 或手动指定(如 '2026-02-13')
-4. 排除ST股票
-5. 按照综合评分降序排列
+2. 综合评分权重：1日净流入35% + 5日净流入45% + 涨幅10% + 概念热度10%
+3. 概念热度 = 该股票近5日涨停时涉及的热概念数量
+4. 今日日期用 @trade_date 变量或手动指定
+5. 排除ST股票
+6. 按照综合评分降序排列
