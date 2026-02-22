@@ -2,7 +2,7 @@
 
 /**
  * Tavily Search Script
- * Usage: node tavily-search.js "search query" [max_results]
+ * Usage: node search.js "search query" [max_results]
  * 
  * Environment:
  *   TVLY_API_KEY - Tavily API key (required)
@@ -87,8 +87,8 @@ function formatResults(results) {
 // Main
 const args = process.argv.slice(2);
 if (args.length === 0) {
-  console.error('Usage: node tavily-search.js "search query" [max_results]');
-  console.error('Example: node tavily-search.js "OpenClaw AI" 5');
+  console.error('Usage: node search.js "search query" [max_results]');
+  console.error('Example: node search.js "OpenClaw AI" 5');
   process.exit(1);
 }
 
