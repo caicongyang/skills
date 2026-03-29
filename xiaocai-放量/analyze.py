@@ -4,16 +4,34 @@
 """
 import mysql.connector
 import sys
+import json
+import os
 from datetime import datetime, timedelta
 from collections import defaultdict
 
-# Database connection
+# Get config path (support both skill directory and workspace)
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
+CONFIG_PATHS = [
+    os.path.join(SCRIPT_DIR, "config", "database.json"),
+    os.path.join(SCRIPT_DIR, "..", "..", "TOOLS.md")  # fallback to workspace
+]
+
+def load_db_config():
+    """Load database config from JSON file"""
+    for config_path in CONFIG_PATHS:
+        if os.path.exists(config_path) and config_path.endswith(".json"):
+            with open(config_path, "r") as f:
+                return json.load(f)
+    raise FileNotFoundError("database.json config file not found")
+
+# Load config and connect
+config = load_db_config()
 db = mysql.connector.connect(
-    host="43.133.13.36",
-    port=3333,
-    user="root",
-    password="root",
-    database="stock"
+    host=config["host"],
+    port=config["port"],
+    user=config["user"],
+    password=config["password"],
+    database=config["database"]
 )
 cursor = db.cursor()
 
