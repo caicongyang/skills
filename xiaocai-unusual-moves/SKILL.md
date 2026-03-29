@@ -1,6 +1,6 @@
 ---
 name: xiaocai-unusual-moves
-description: A股异动股分析工具。选出10个交易日内成交量翻倍且今天涨停的股票，按概念分组推送。
+description: A股异动股分析工具。选出10个交易日内出现过相邻两天成交量翻倍且今天涨停的股票，按概念分组推送。
 metadata:
   {
     "openclaw":
@@ -22,7 +22,7 @@ metadata:
   }
 ---
 
-# 异动股分析 — 选出10个交易日内成交量翻倍且今天涨停的股票
+# 异动股分析 — 选出10个交易日内出现过成交量翻倍且今天涨停的股票
 
 ## 触发场景
 
@@ -79,62 +79,93 @@ export STOCK_DB_NAME="stock"
 
 ## 筛选条件
 
-1. **10个交易日内成交量翻倍**：10日前成交量 × 2 ≤ 当前成交量
+两个条件同时满足：
+
+1. **10个交易日内出现过成交量翻倍**：过去10个交易日中，任意相邻两天出现过成交量翻倍（day-over-day doubling）
 2. **今日涨停**：pct_chg >= 9.9%
 3. 排除ST股票
 4. 股价 3-500元
 
 ## SQL查询
 
+分两步执行：
+
+**Step 1：获取近11个交易日（多取1天用于相邻比较）**
+
 ```sql
--- 变量: @trade_date = '2026-02-13', @date_10d_ago = '2026-02-03'
+SELECT DISTINCT trade_date FROM t_stock
+WHERE volume > 0
+ORDER BY trade_date DESC
+LIMIT 11;
+-- 结果存为 @dates 列表，@trade_date = 最新日期
+```
+
+**Step 2：找出10日内有相邻成交量翻倍 + 今日涨停的股票**
+
+```sql
 SELECT 
-    s.stock_code,
-    s.stock_name,
-    s.close as current_close,
-    ROUND(s.pct_chg, 2) as pct_chg,
-    s.volume as current_vol,
-    s10.volume as vol_10d_ago,
-    ROUND(s.volume / s10.volume, 2) as vol_ratio,
+    today.stock_code,
+    today.stock_name,
+    today.close,
+    ROUND(today.pct_chg, 2) as pct_chg,
+    doubles.double_date,
+    doubles.vol_ratio,
     cs.concepts
-FROM t_stock s
+FROM t_stock today
 INNER JOIN (
-    SELECT stock_code, volume
-    FROM t_stock
-    WHERE trade_date = @date_10d_ago
-) s10 ON s.stock_code = s10.stock_code
+    -- 10个交易日内，任意相邻两天成交量翻倍
+    SELECT curr.stock_code,
+           curr.trade_date as double_date,
+           ROUND(curr.volume / prev.volume, 2) as vol_ratio
+    FROM t_stock curr
+    INNER JOIN t_stock prev 
+        ON curr.stock_code = prev.stock_code
+    WHERE curr.trade_date IN (@dates)
+      AND prev.trade_date IN (@dates)
+      -- prev 是 curr 的前一个交易日
+      AND prev.trade_date = (
+          SELECT MAX(t.trade_date) FROM t_stock t
+          WHERE t.stock_code = curr.stock_code
+            AND t.trade_date < curr.trade_date
+            AND t.trade_date IN (@dates)
+            AND t.volume > 0
+      )
+      AND curr.volume >= prev.volume * 2
+      AND curr.volume > 0 AND prev.volume > 0
+) doubles ON today.stock_code = doubles.stock_code
 LEFT JOIN (
     SELECT stock_code, GROUP_CONCAT(DISTINCT concept_name SEPARATOR ',') as concepts
     FROM t_concept_stock 
     GROUP BY stock_code
-) cs ON s.stock_code = cs.stock_code
-WHERE s.trade_date = @trade_date
-  AND s.stock_name NOT LIKE 'ST%'
-  AND s.stock_name NOT LIKE '*ST%'
-  AND s.close > 3
-  AND s.close < 500
-  AND s.pct_chg >= 9.9
-  AND s.volume >= s10.volume * 2
-ORDER BY s.volume DESC;
+) cs ON today.stock_code = cs.stock_code
+WHERE today.trade_date = @trade_date
+  AND today.stock_name NOT LIKE 'ST%'
+  AND today.stock_name NOT LIKE '*ST%'
+  AND today.close > 3
+  AND today.close < 500
+  AND today.pct_chg >= 9.9
+ORDER BY doubles.vol_ratio DESC;
 ```
 
 ## 输出格式
 
+标题：`📈 异动股分析 {日期} — 10个交易日内出现过成交量翻倍且今天涨停`
+
 按概念分组展示：
 
 ### 📈 芯片概念 (X只)
-| 代码 | 名称 | 收盘价 | 涨幅 | 成交量倍数 |
-|:---|:---|:---:|:---:|:---:|
-| 000001 | 某股票 | 10.50 | 10.02% | 2.35x |
+| 代码 | 名称 | 收盘价 | 涨幅 | 翻倍日期 | 成交量倍数 |
+|:---|:---|:---:|:---:|:---:|:---:|
+| 000001 | 某股票 | 10.50 | 10.02% | 2026-03-25 | 2.35x |
 
 ### 📈 新能源概念 (X只)
 ...
 
 ## 注意事项
 
-1. 成交量翻倍 = 当前成交量 >= 10日前成交量 × 2
+1. 成交量翻倍 = 过去10个交易日内任意相邻两天，后一天成交量 >= 前一天 × 2
 2. 今日涨停 = 涨幅 >= 9.9%
 3. 交易日期自动取数据库最新日期，自动跳过节假日
 4. 按概念分组推送，每个概念下列出相关股票
-5. 成交量单位需确认（手或元）
+5. 输出中展示具体哪天发生了成交量翻倍及倍数
 6. 放量涨停可能是资金短期炒作，注意追高风险
